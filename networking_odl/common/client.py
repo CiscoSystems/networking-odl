@@ -39,4 +39,5 @@ class OpenDaylightRestClient(object):
         r = requests.request(method, url=url,
                              headers=headers, data=data,
                              auth=self.auth, timeout=self.timeout)
+        LOG.debug("Got response (%(response)s)", {'response': r.text})
         r.raise_for_status()
