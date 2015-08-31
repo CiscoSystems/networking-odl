@@ -13,6 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import threading
+
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import excutils
@@ -28,6 +30,9 @@ from neutron.plugins.ml2 import driver_api as api
 
 LOG = logging.getLogger(__name__)
 
+# TODO(rcurran): Make configurable. (Config under /neutron today.)
+ODL_SYNC_THREAD_TIMEOUT = 10
+
 
 class OpenDaylightMechanismDriver(api.MechanismDriver):
 
@@ -42,7 +47,27 @@ class OpenDaylightMechanismDriver(api.MechanismDriver):
         # migration is added
         model_base.BASEV2.metadata.create_all(db.db.get_engine())
         LOG.debug("Initializing OpenDaylight ML2 driver")
+        self._odl_sync_timeout = ODL_SYNC_THREAD_TIMEOUT
+        self._odl_sync_lock = threading.Lock()
+        self._odl_sync_thread()
 
+    def _odl_sync_thread(self):
+        with self._odl_sync_lock:
+            self.odl_synchronize()
+
+        self.timer = threading.Timer(self._odl_sync_timeout,
+                                     self._odl_sync_thread)
+        self.timer.start()
+
+    # TODO(rcurran): Keep this method here or new class/module?
+    def odl_synchronize(self):
+        pass
+
+    def stop_odl_sync_thread(self):
+        if self.timer:
+            self.timer.cancel()
+            self.timer = None
+ 
     def create_network_precommit(self, context):
         db.create_pending_row(None, 'network', context.current['id'],
                               'create_network', context.current)
