@@ -67,7 +67,7 @@ class OpenDaylightMechanismDriver(api.MechanismDriver):
         if self.timer:
             self.timer.cancel()
             self.timer = None
- 
+
     def create_network_precommit(self, context):
         db.create_pending_row(None, 'network', context.current['id'],
                               'create_network', context.current)
@@ -103,3 +103,47 @@ class OpenDaylightMechanismDriver(api.MechanismDriver):
     def delete_port_precommit(self, context):
         db.create_pending_row(None, 'port', context.current['id'],
                               'delete_port', context.current)
+
+    def bind_port(self, port_context):
+        """Set binding for all valid segments
+
+        """
+
+        valid_segment = None
+        for segment in port_context.segments_to_bind:
+            if self._check_segment(segment):
+                valid_segment = segment
+                break
+
+        if valid_segment:
+            vif_type = self._get_vif_type(port_context)
+            LOG.debug("Bind port %(port)s on network %(network)s with valid "
+                      "segment %(segment)s and VIF type %(vif_type)r.",
+                      {'port': port_context.current['id'],
+                       'network': port_context.network.current['id'],
+                       'segment': valid_segment, 'vif_type': vif_type})
+
+            port_context.set_binding(
+                segment[api.ID], vif_type,
+                self.vif_details,
+                status=n_const.PORT_STATUS_ACTIVE)
+
+    def _check_segment(self, segment):
+        """Verify a segment is valid for the OpenDaylight MechanismDriver.
+
+        Verify the requested segment is supported by ODL and return True or
+        False to indicate this to callers.
+        """
+
+        network_type = segment[api.NETWORK_TYPE]
+        return network_type in [constants.TYPE_LOCAL, constants.TYPE_GRE,
+                                constants.TYPE_VXLAN, constants.TYPE_VLAN]
+
+    def _get_vif_type(self, port_context):
+        """Get VIF type string for given PortContext
+
+        Dummy implementation: it always returns following constant.
+        neutron.extensions.portbindings.VIF_TYPE_OVS
+        """
+
+        return portbindings.VIF_TYPE_OVS
