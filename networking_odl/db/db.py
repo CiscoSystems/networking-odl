@@ -1,5 +1,6 @@
 import time
 
+from sqlalchemy import func
 from sqlalchemy import or_
 from sqlalchemy import orm
 from sqlalchemy.orm import exc
@@ -18,14 +19,14 @@ def get_untried_db_row_with_lock(session=None):
     if session is None:
         session = db.get_session()
 
-    return session.query(OpendaylightJournal).filter(
+    return session.query(OpendaylightJournal).filter_by(
            state='pending', retry_count=0).with_for_update().first()
 
 def get_pending_db_row_with_lock(session=None):
     if session is None:
         session = db.get_session()
 
-    return session.query(OpendaylightJournal).filter(
+    return session.query(OpendaylightJournal).filter_by(
            state='pending').with_for_update().first()
 
 def update_pending_db_row_processing(row):
@@ -46,7 +47,7 @@ def delete_row(session, row=None, row_id=None):
     if session is None:
         session = db.get_session()
     if row_id:
-        row = session.query(OpendaylightJournal).filter(id=row_id).one()
+        row = session.query(OpendaylightJournal).filter_by(id=row_id).one()
     if row:
         session.delete(row)
         session.flush()
@@ -56,7 +57,8 @@ def create_pending_row(session, object_type, object_uuid,
     if session is None:
         session = db.get_session()
     row = OpendaylightJournal(object_type=object_type, object_uuid=object_uuid,
-                              operation=operation, data=data, state='pending')
+                              operation=operation, data=data,
+                              created_at=func.now(), state='pending')
     session.add(row)
     session.flush()
 
