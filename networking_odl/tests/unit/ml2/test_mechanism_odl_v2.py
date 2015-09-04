@@ -20,13 +20,12 @@ from networking_odl.ml2 import mech_driver_v2
 import mock
 from oslo_serialization import jsonutils
 import requests
-import webob.exc
+# TODO(rcurran): import webob.exc
 
-from neutron.extensions import portbindings
+# TODO(rcurran): from neutron.extensions import portbindings
 from neutron.plugins.common import constants
 from neutron.plugins.ml2 import config as config
 from neutron.plugins.ml2 import driver_api as api
-from neutron.plugins.ml2.drivers.opendaylight import driver
 from neutron.plugins.ml2 import plugin
 from neutron.tests import base
 from neutron.tests.unit.plugins.ml2 import test_plugin
@@ -104,6 +103,7 @@ class OpenDaylightMechanismTestPortsV2(test_plugin.TestMl2PortsV2,
                                        OpenDaylightTestCase):
 
     pass
+# TODO(rcurran): need this?
 #    def test_update_port_mac(self):
 #        self.check_update_port_mac(
 #            host_arg={portbindings.HOST_ID: HOST},
@@ -241,7 +241,7 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
             timeout=config.cfg.CONF.ml2_odl.timeout, *args, **kwargs)
 
     def _test_create_resource_precommit(self, object_type, status_code,
-                                         exc_class=None):
+                                        exc_class=None):
         method = getattr(self.mech, 'create_%s_precommit' % object_type)
         context = self._get_mock_operation_context(object_type)
         url = '%s/%ss' % (config.cfg.CONF.ml2_odl.url, object_type)
@@ -250,37 +250,44 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         self._test_single_operation(method, context, status_code, exc_class,
                                     'post', **kwargs)
 
-    def test_create_network_precommit(self):
-        network_context = self._get_mock_network_operation_context()
-        self.mech.create_network_precommit(network_context)
+    def _test_operation_object_precommit(self, operation, object_type):
+        context = self._get_mock_operation_context(object_type)
+        method = getattr(self.mech, '%s_precommit' % operation)
+        method(context)
 
         row = db.get_pending_db_row_with_lock()
-        self.assertEqual(network_context.current['id'],
-                         row['object_uuid'])
+        self.assertEqual(operation, row['operation'])
+        self.assertEqual(object_type, row['object_type'])
+        self.assertEqual(context.current['id'], row['object_uuid'])
+
+        db.delete_row(session=None, row=row)
+
+    def test_create_network_precommit(self):
+        self._test_operation_object_precommit('create_network', 'network')
 
     def test_create_subnet_precommit(self):
-        pass
+        self._test_operation_object_precommit('create_subnet', 'subnet')
 
     def test_create_port_precommit(self):
-        pass
+        self._test_operation_object_precommit('create_port', 'port')
 
     def test_update_network_precommit(self):
-        pass
+        self._test_operation_object_precommit('update_network', 'network')
 
     def test_update_subnet_precommit(self):
-        pass
+        self._test_operation_object_precommit('update_subnet', 'subnet')
 
     def test_update_port_precommit(self):
-        pass
+        self._test_operation_object_precommit('update_port', 'port')
 
     def test_delete_network_precommit(self):
-        pass
+        self._test_operation_object_precommit('delete_network', 'network')
 
     def test_delete_subnet_precommit(self):
-        pass
+        self._test_operation_object_precommit('delete_subnet', 'subnet')
 
     def test_delete_port_precommit(self):
-        pass
+        self._test_operation_object_precommit('delete_port', 'port')
 
     def test_check_segment(self):
         """Validate the check_segment call."""
