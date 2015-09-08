@@ -18,14 +18,14 @@ def get_untried_db_row_with_lock(session=None):
     if session is None:
         session = db.get_session()
 
-    return session.query(OpendaylightJournal).filter(
+    return session.query(OpendaylightJournal).filter_by(
            state='pending', retry_count=0).with_for_update().first()
 
 def get_pending_db_row_with_lock(session=None):
     if session is None:
         session = db.get_session()
 
-    return session.query(OpendaylightJournal).filter(
+    return session.query(OpendaylightJournal).filter_by(
            state='pending').with_for_update().first()
 
 def update_pending_db_row_processing(row):
@@ -70,7 +70,7 @@ def validate_operation(session, object_type, object_uuid, operation,
     if session is None:
         session = db.get_session()
 
-    if object_type in ('port','subnet'):
+    if object_type in ('port', 'subnet'):
         network_id = data['network_id']
         # Check for pending or processing network operations
         ops = _check_for_pending_or_processing_ops(session, network_id)

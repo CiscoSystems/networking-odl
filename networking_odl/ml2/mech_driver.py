@@ -22,6 +22,7 @@ from neutron.common import exceptions as n_exc
 from neutron.common import utils
 
 from networking_odl.common import client as odl_client
+from networking_odl.common import config as odl_conf
 from networking_odl.common import constants as odl_const
 from networking_odl.common import utils as odl_utils
 
