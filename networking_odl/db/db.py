@@ -1,5 +1,6 @@
 import time
 
+from sqlalchemy import func
 from sqlalchemy import or_
 from sqlalchemy import orm
 from sqlalchemy.orm import exc
@@ -46,7 +47,7 @@ def delete_row(session, row=None, row_id=None):
     if session is None:
         session = db.get_session()
     if row_id:
-        row = session.query(OpendaylightJournal).filter(id=row_id).one()
+        row = session.query(OpendaylightJournal).filter_by(id=row_id).one()
     if row:
         session.delete(row)
         session.flush()
@@ -56,7 +57,8 @@ def create_pending_row(session, object_type, object_uuid,
     if session is None:
         session = db.get_session()
     row = OpendaylightJournal(object_type=object_type, object_uuid=object_uuid,
-                              operation=operation, data=data, state='pending')
+                              operation=operation, data=data,
+                              created_at=func.now(), state='pending')
     session.add(row)
     session.flush()
 
