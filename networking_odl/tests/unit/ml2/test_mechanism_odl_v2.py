@@ -252,7 +252,8 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
 
     def _test_operation_object_precommit(self, operation, object_type):
         context = self._get_mock_operation_context(object_type)
-        method = getattr(self.mech, '%s_precommit' % operation)
+        method = getattr(self.mech, '%s_%s_precommit' % (operation,
+                                                         object_type))
         method(context)
 
         row = db.get_pending_db_row_with_lock()
@@ -263,31 +264,31 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         db.delete_row(session=None, row=row)
 
     def test_create_network_precommit(self):
-        self._test_operation_object_precommit('create_network', 'network')
+        self._test_operation_object_precommit('create', 'network')
 
     def test_create_subnet_precommit(self):
-        self._test_operation_object_precommit('create_subnet', 'subnet')
+        self._test_operation_object_precommit('create', 'subnet')
 
     def test_create_port_precommit(self):
-        self._test_operation_object_precommit('create_port', 'port')
+        self._test_operation_object_precommit('create', 'port')
 
     def test_update_network_precommit(self):
-        self._test_operation_object_precommit('update_network', 'network')
+        self._test_operation_object_precommit('update', 'network')
 
     def test_update_subnet_precommit(self):
-        self._test_operation_object_precommit('update_subnet', 'subnet')
+        self._test_operation_object_precommit('update', 'subnet')
 
     def test_update_port_precommit(self):
-        self._test_operation_object_precommit('update_port', 'port')
+        self._test_operation_object_precommit('update', 'port')
 
     def test_delete_network_precommit(self):
-        self._test_operation_object_precommit('delete_network', 'network')
+        self._test_operation_object_precommit('delete', 'network')
 
     def test_delete_subnet_precommit(self):
-        self._test_operation_object_precommit('delete_subnet', 'subnet')
+        self._test_operation_object_precommit('delete', 'subnet')
 
     def test_delete_port_precommit(self):
-        self._test_operation_object_precommit('delete_port', 'port')
+        self._test_operation_object_precommit('delete', 'port')
 
     def test_check_segment(self):
         """Validate the check_segment call."""
