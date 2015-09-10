@@ -20,9 +20,7 @@ from networking_odl.ml2 import mech_driver_v2
 import mock
 from oslo_serialization import jsonutils
 import requests
-# TODO(rcurran): import webob.exc
 
-# TODO(rcurran): from neutron.extensions import portbindings
 from neutron.plugins.common import constants
 from neutron.plugins.ml2 import config as config
 from neutron.plugins.ml2 import driver_api as api
@@ -103,13 +101,6 @@ class OpenDaylightMechanismTestPortsV2(test_plugin.TestMl2PortsV2,
                                        OpenDaylightTestCase):
 
     pass
-# TODO(rcurran): need this?
-#    def test_update_port_mac(self):
-#        self.check_update_port_mac(
-#            host_arg={portbindings.HOST_ID: HOST},
-#            arg_list=(portbindings.HOST_ID,),
-#            expected_status=webob.exc.HTTPConflict.code,
-#            expected_error='PortBound')
 
 
 class DataMatcher(object):
@@ -117,10 +108,10 @@ class DataMatcher(object):
     def __init__(self, operation, object_type, context):
         self._data = context.current.copy()
         self._object_type = object_type
-        filter_map = getattr(mech_driver_v2.OpenDaylightDriver,
+        filter_map = getattr(mech_driver_v2.OpendaylightJournalThread,
                              '%s_object_map' % operation)
-        attr_filter = filter_map["%ss" % object_type]
-        attr_filter(self._data, context)
+        attr_filter = filter_map["%s" % object_type]
+        attr_filter(self._data)
 
     def __eq__(self, s):
         data = jsonutils.loads(s)
@@ -138,6 +129,7 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         config.cfg.CONF.set_override('password', 'somepass', 'ml2_odl')
         self.mech = mech_driver_v2.OpenDaylightMechanismDriver()
         self.mech.initialize()
+        self.thread = mech_driver_v2.OpendaylightJournalThread()
 
     @staticmethod
     def _get_mock_network_operation_context():
@@ -226,14 +218,13 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
 
     def _test_single_operation(self, method, context, status_code,
                                exc_class=None, *args, **kwargs):
-        self.mech.odl_drv.out_of_sync = False
         request_response = self._get_mock_request_response(status_code)
         with mock.patch('requests.request',
                         return_value=request_response) as mock_method:
             if exc_class is not None:
                 self.assertRaises(exc_class, method, context)
             else:
-                method(context)
+                method()
         mock_method.assert_called_once_with(
             headers={'Content-Type': 'application/json'},
             auth=(config.cfg.CONF.ml2_odl.username,
@@ -250,7 +241,8 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         self._test_single_operation(method, context, status_code, exc_class,
                                     'post', **kwargs)
 
-    def _test_operation_object_precommit(self, operation, object_type):
+    def _test_operation_object_precommit(self, operation, object_type,
+                                         delete_row=True):
         context = self._get_mock_operation_context(object_type)
         method = getattr(self.mech, '%s_%s_precommit' % (operation,
                                                          object_type))
@@ -261,34 +253,27 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         self.assertEqual(object_type, row['object_type'])
         self.assertEqual(context.current['id'], row['object_uuid'])
 
-        db.delete_row(session=None, row=row)
+        if delete_row:
+            db.delete_row(session=None, row=row)
 
-    def test_create_network_precommit(self):
-        self._test_operation_object_precommit('create', 'network')
+    def test_driver_precommit(self):
+        for operation in ['create', 'update', 'delete']:
+            for object_type in ['network', 'subnet', 'port']:
+                self._test_operation_object_precommit(operation, object_type)
 
-    def test_create_subnet_precommit(self):
-        self._test_operation_object_precommit('create', 'subnet')
+    def test_thread_processing(self):
+        object_type = 'network'
+        self._test_operation_object_precommit('create', object_type,
+                                              delete_row=False)
 
-    def test_create_port_precommit(self):
-        self._test_operation_object_precommit('create', 'port')
-
-    def test_update_network_precommit(self):
-        self._test_operation_object_precommit('update', 'network')
-
-    def test_update_subnet_precommit(self):
-        self._test_operation_object_precommit('update', 'subnet')
-
-    def test_update_port_precommit(self):
-        self._test_operation_object_precommit('update', 'port')
-
-    def test_delete_network_precommit(self):
-        self._test_operation_object_precommit('delete', 'network')
-
-    def test_delete_subnet_precommit(self):
-        self._test_operation_object_precommit('delete', 'subnet')
-
-    def test_delete_port_precommit(self):
-        self._test_operation_object_precommit('delete', 'port')
+        context = self._get_mock_operation_context(object_type)
+        exc_class = None
+        url = '%s/%ss' % (config.cfg.CONF.ml2_odl.url, object_type)
+        kwargs = {'url': url,
+                  'data': DataMatcher('create', object_type, context)}
+        self._test_single_operation(self.thread.sync_pending_row, context,
+                                    requests.codes.created, exc_class,
+                                    'post', **kwargs)
 
     def test_check_segment(self):
         """Validate the check_segment call."""
