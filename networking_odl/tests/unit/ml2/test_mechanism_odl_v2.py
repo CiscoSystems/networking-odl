@@ -20,9 +20,9 @@ from networking_odl.ml2 import mech_driver_v2
 import mock
 from oslo_serialization import jsonutils
 import requests
-# TODO(rcurran): import webob.exc
+import webob.exc
 
-# TODO(rcurran): from neutron.extensions import portbindings
+from neutron.extensions import portbindings
 from neutron.plugins.common import constants
 from neutron.plugins.ml2 import config as config
 from neutron.plugins.ml2 import driver_api as api
@@ -48,6 +48,8 @@ class OpenDaylightTestCase(test_plugin.Ml2PluginV2TestCase):
         super(OpenDaylightTestCase, self).setUp()
         self.port_create_status = 'DOWN'
         self.mech = mech_driver_v2.OpenDaylightMechanismDriver()
+        mock.patch.object(mech_driver_v2.OpenDaylightMechanismDriver,
+                          '_odl_sync_thread').start()
         client.OpenDaylightRestClient.sendjson = (self.check_sendjson)
 
     def check_sendjson(self, method, urlpath, obj):
@@ -101,15 +103,12 @@ class OpenDaylightMechanismTestSubnetsV2(test_plugin.TestMl2SubnetsV2,
 
 class OpenDaylightMechanismTestPortsV2(test_plugin.TestMl2PortsV2,
                                        OpenDaylightTestCase):
-
-    pass
-# TODO(rcurran): need this?
-#    def test_update_port_mac(self):
-#        self.check_update_port_mac(
-#            host_arg={portbindings.HOST_ID: HOST},
-#            arg_list=(portbindings.HOST_ID,),
-#            expected_status=webob.exc.HTTPConflict.code,
-#            expected_error='PortBound')
+    def test_update_port_mac(self):
+        self.check_update_port_mac(
+            host_arg={portbindings.HOST_ID: HOST},
+            arg_list=(portbindings.HOST_ID,),
+            expected_status=webob.exc.HTTPConflict.code,
+            expected_error='PortBound')
 
 
 class DataMatcher(object):
@@ -117,10 +116,10 @@ class DataMatcher(object):
     def __init__(self, operation, object_type, context):
         self._data = context.current.copy()
         self._object_type = object_type
-        filter_map = getattr(mech_driver_v2.OpenDaylightDriver,
+        filter_map = getattr(mech_driver_v2.OpendaylightJournalThread,
                              '%s_object_map' % operation)
-        attr_filter = filter_map["%ss" % object_type]
-        attr_filter(self._data, context)
+        attr_filter = filter_map["%s" % object_type]
+        attr_filter(self._data)
 
     def __eq__(self, s):
         data = jsonutils.loads(s)
@@ -137,7 +136,10 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         config.cfg.CONF.set_override('username', 'someuser', 'ml2_odl')
         config.cfg.CONF.set_override('password', 'somepass', 'ml2_odl')
         self.mech = mech_driver_v2.OpenDaylightMechanismDriver()
+        mock.patch.object(mech_driver_v2.OpenDaylightMechanismDriver,
+                          '_odl_sync_thread').start()
         self.mech.initialize()
+        self.thread = mech_driver_v2.OpendaylightJournalThread()
 
     @staticmethod
     def _get_mock_network_operation_context():
@@ -188,7 +190,7 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
                    'device_id': 'fake_device',
                    'name': '',
                    'admin_state_up': True,
-                   'network_id': 'c13bba05-eb07-45ba-ace2-765706b2d701',
+                   'network_id': 'd897e21a-dfd6-4331-a5dd-7524fa421c3e',
                    'tenant_id': 'bad_tenant_id',
                    'binding:vif_details': {},
                    'binding:vnic_type': 'normal',
@@ -196,6 +198,7 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
                    'mac_address': '12:34:56:78:21:b6'}
         context = mock.Mock(current=current)
         context._plugin.get_security_group = mock.Mock(return_value={})
+        context._plugin.get_port = mock.Mock(return_value=current)
         return context
 
     @classmethod
@@ -216,6 +219,11 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
         503: '503 Server Error: Service Unavailable',
     }
 
+    def _db_cleanup(self):
+        rows = db.get_all_db_rows()
+        for row in rows:
+            db.delete_row(None, row=row)
+
     @classmethod
     def _get_mock_request_response(cls, status_code):
         response = mock.Mock(status_code=status_code)
@@ -224,70 +232,167 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
                 cls._status_code_msgs[status_code])))
         return response
 
-    def _test_single_operation(self, method, context, status_code,
-                               exc_class=None, *args, **kwargs):
-        self.mech.odl_drv.out_of_sync = False
+    def _test_operation(self, method, context, status_code, expected_calls,
+                        *args, **kwargs):
         request_response = self._get_mock_request_response(status_code)
         with mock.patch('requests.request',
                         return_value=request_response) as mock_method:
-            if exc_class is not None:
-                self.assertRaises(exc_class, method, context)
-            else:
-                method(context)
-        mock_method.assert_called_once_with(
-            headers={'Content-Type': 'application/json'},
-            auth=(config.cfg.CONF.ml2_odl.username,
-                  config.cfg.CONF.ml2_odl.password),
-            timeout=config.cfg.CONF.ml2_odl.timeout, *args, **kwargs)
+            method()
 
-    def _test_create_resource_precommit(self, object_type, status_code,
-                                        exc_class=None):
+        if expected_calls:
+            mock_method.assert_called_with(
+                headers={'Content-Type': 'application/json'},
+                auth=(config.cfg.CONF.ml2_odl.username,
+                      config.cfg.CONF.ml2_odl.password),
+                timeout=config.cfg.CONF.ml2_odl.timeout, *args, **kwargs)
+        self.assertEqual(expected_calls, mock_method.call_count)
+
+    def _test_create_resource_precommit(self, object_type, status_code):
         method = getattr(self.mech, 'create_%s_precommit' % object_type)
         context = self._get_mock_operation_context(object_type)
         url = '%s/%ss' % (config.cfg.CONF.ml2_odl.url, object_type)
         kwargs = {'url': url,
                   'data': DataMatcher('create', object_type, context)}
-        self._test_single_operation(method, context, status_code, exc_class,
-                                    'post', **kwargs)
+        self._test_operation(method, context, status_code, 'post', **kwargs)
 
-    def _test_operation_object_precommit(self, operation, object_type):
+    def _call_operation_object_precommit(self, operation, object_type):
         context = self._get_mock_operation_context(object_type)
-        method = getattr(self.mech, '%s_precommit' % operation)
+        method = getattr(self.mech, '%s_%s_precommit' % (operation,
+                                                         object_type))
         method(context)
 
-        row = db.get_pending_db_row_with_lock()
+    def _test_operation_object_precommit(self, operation, object_type,
+                                         delete_row=True):
+        self._call_operation_object_precommit(operation, object_type)
+
+        context = self._get_mock_operation_context(object_type)
+        row = db.get_oldest_pending_db_row_with_lock()
         self.assertEqual(operation, row['operation'])
         self.assertEqual(object_type, row['object_type'])
         self.assertEqual(context.current['id'], row['object_uuid'])
 
-        db.delete_row(session=None, row=row)
+        if delete_row:
+            db.delete_row(session=None, row=row)
+        else:
+            return row
 
-    def test_create_network_precommit(self):
-        self._test_operation_object_precommit('create_network', 'network')
+    def _test_thread_processing(self, object_type, operation,
+                                expected_calls=1):
+        http_requests = {'create': 'post',
+                         'update': 'put',
+                         'delete': 'delete'}
+        status_codes = {'create': requests.codes.created,
+                        'update': requests.codes.ok,
+                        'delete': requests.codes.no_content}
 
-    def test_create_subnet_precommit(self):
-        self._test_operation_object_precommit('create_subnet', 'subnet')
+        http_request = http_requests[operation]
+        status_code = status_codes[operation]
 
-    def test_create_port_precommit(self):
-        self._test_operation_object_precommit('create_port', 'port')
+        self._call_operation_object_precommit(operation, object_type)
 
-    def test_update_network_precommit(self):
-        self._test_operation_object_precommit('update_network', 'network')
+        context = self._get_mock_operation_context(object_type)
+        if operation in ['update', 'delete']:
+            url = '%s/%ss/%s' % (config.cfg.CONF.ml2_odl.url,
+                                 object_type, context.current['id'])
+        else:
+            url = '%s/%ss' % (config.cfg.CONF.ml2_odl.url, object_type)
 
-    def test_update_subnet_precommit(self):
-        self._test_operation_object_precommit('update_subnet', 'subnet')
+        if operation in ['create', 'update']:
+            kwargs = {
+                'url': url,
+                'data': DataMatcher(operation, object_type, context)}
+        else:
+            kwargs = {'url': url, 'data': None}
+        self._test_operation(self.thread.sync_pending_row, context,
+                             status_code, expected_calls, http_request,
+                             **kwargs)
 
-    def test_update_port_precommit(self):
-        self._test_operation_object_precommit('update_port', 'port')
+    def _test_object_type(self, object_type):
+        # Add and process create request.
+        self._test_thread_processing(object_type, 'create')
+        rows = db.get_all_db_rows_by_state(None, 'completed')
+        self.assertEqual(1, len(rows))
 
-    def test_delete_network_precommit(self):
-        self._test_operation_object_precommit('delete_network', 'network')
+        # Add and process update request. Adds to database.
+        self._test_thread_processing(object_type, 'update')
+        rows = db.get_all_db_rows_by_state(None, 'completed')
+        self.assertEqual(2, len(rows))
 
-    def test_delete_subnet_precommit(self):
-        self._test_operation_object_precommit('delete_subnet', 'subnet')
+        # Add and process update request. Adds to database.
+        self._test_thread_processing(object_type, 'delete')
+        rows = db.get_all_db_rows_by_state(None, 'completed')
+        self.assertEqual(3, len(rows))
 
-    def test_delete_port_precommit(self):
-        self._test_operation_object_precommit('delete_port', 'port')
+        self._db_cleanup()
+
+    def _test_object_type_pending_network(self, object_type):
+        # Create a network (creates db row in pending state).
+        self._call_operation_object_precommit('create', 'network')
+
+        # Create object_type database row and process. This results in both
+        # the object_type and network rows being processed.
+        self._test_thread_processing(object_type, 'create', expected_calls=2)
+
+        # Verify both rows are now marked as completed.
+        rows = db.get_all_db_rows_by_state(None, 'completed')
+        self.assertEqual(2, len(rows))
+
+        self._db_cleanup()
+
+    def test_driver_precommit(self):
+        for operation in ['create', 'update', 'delete']:
+            for object_type in ['network', 'subnet', 'port']:
+                self._test_operation_object_precommit(operation, object_type)
+
+    def test_network(self):
+        self._test_object_type('network')
+
+    def test_subnet(self):
+        self._test_object_type('subnet')
+
+    def test_subnet_pending_network(self):
+        self._test_object_type_pending_network('subnet')
+
+    def test_port(self):
+        self._test_object_type('port')
+
+    def test_port_pending_network(self):
+        self._test_object_type_pending_network('port')
+
+    # TODO(rcurran): Revisit this UT once db state of "processing" is
+    # introduced into driver code. Perhaps include a UT with network_id
+    # that does not belong to this port.
+    def test_port_processing_network(self):
+        # Create a network (creates db row in pending state).
+        self._call_operation_object_precommit('create', 'network')
+
+        # Get network row and mark as processing.
+        row = db.get_all_db_rows_by_state(None, 'pending')
+        db.update_pending_db_row_processing(None, row[0])
+
+        # Create port database row and process.
+        # Verify that port create request is not processed (until we force
+        # processing via mock).
+        #
+        # Mock out call in validate_operation to return twice with
+        # "valid" data (this represents the "processing" network row).
+        # Third call will return [] to have the port row processed.
+        # (Just to get the test out of the infinite loop.)
+        # expected_calls = 1 verifies that the port row was processed
+        # but not the network row.
+        return_values = [['valid_dummy1'], ['valid_dummy2'], []]
+        with mock.patch.object(db, '_check_for_pending_or_processing_ops',
+                               side_effect=return_values) as mock_method:
+            self._test_thread_processing('port', 'create', expected_calls=1)
+
+        # Verify that network row is still in the database.
+        rows = db.get_all_db_rows_by_state(None, 'processing')
+        self.assertEqual(1, len(rows))
+
+        # Verify calls to mocked method.
+        self.assertEqual(len(return_values), mock_method.call_count)
+
+        self._db_cleanup()
 
     def test_check_segment(self):
         """Validate the check_segment call."""

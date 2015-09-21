@@ -23,6 +23,21 @@ def get_untried_db_row_with_lock(session=None):
     return session.query(OpendaylightJournal).filter_by(
            state='pending', retry_count=0).with_for_update().first()
 
+
+def get_all_db_rows(session=None):
+    if session is None:
+        session = db.get_session()
+
+    return session.query(OpendaylightJournal).all()
+
+
+def get_all_db_rows_by_state(session, state):
+    if session is None:
+        session = db.get_session()
+
+    return session.query(OpendaylightJournal).filter_by(state=state).all()
+
+
 def get_oldest_pending_db_row_with_lock(session=None):
     if session is None:
         session = db.get_session()
