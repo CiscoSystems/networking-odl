@@ -50,7 +50,9 @@ class OpenDaylightTestCase(test_plugin.Ml2PluginV2TestCase):
         self.mech = mech_driver_v2.OpenDaylightMechanismDriver()
         mock.patch.object(mech_driver_v2.OpenDaylightMechanismDriver,
                           '_odl_sync_thread').start()
-        client.OpenDaylightRestClient.sendjson = (self.check_sendjson)
+        self.mock_sendjson = mock.patch.object(client.OpenDaylightRestClient,
+                                               'sendjson').start()
+        self.mock_sendjson.side_effect = self.check_sendjson
 
     def check_sendjson(self, method, urlpath, obj):
         self.assertFalse(urlpath.startswith("http://"))
@@ -261,20 +263,17 @@ class OpenDaylightMechanismDriverTestCase(base.BaseTestCase):
                                                          object_type))
         method(context)
 
-    def _test_operation_object_precommit(self, operation, object_type,
-                                         delete_row=True):
+    def _test_operation_object_precommit(self, operation, object_type):
         self._call_operation_object_precommit(operation, object_type)
 
         context = self._get_mock_operation_context(object_type)
         row = db.get_oldest_pending_db_row_with_lock()
+
         self.assertEqual(operation, row['operation'])
         self.assertEqual(object_type, row['object_type'])
         self.assertEqual(context.current['id'], row['object_uuid'])
 
-        if delete_row:
-            db.delete_row(session=None, row=row)
-        else:
-            return row
+        self._db_cleanup()
 
     def _test_thread_processing(self, object_type, operation,
                                 expected_calls=1):

@@ -51,7 +51,9 @@ class OpenDaylightTestCase(test_plugin.Ml2PluginV2TestCase):
         super(OpenDaylightTestCase, self).setUp()
         self.port_create_status = 'DOWN'
         self.mech = driver.OpenDaylightMechanismDriver()
-        client.OpenDaylightRestClient.sendjson = (self.check_sendjson)
+        self.mock_sendjson = mock.patch.object(client.OpenDaylightRestClient,
+                                               'sendjson').start()
+        self.mock_sendjson.side_effect = self.check_sendjson
 
     def check_sendjson(self, method, urlpath, obj):
         self.assertFalse(urlpath.startswith("http://"))
